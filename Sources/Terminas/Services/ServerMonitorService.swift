@@ -153,7 +153,7 @@ public class ServerMonitorService: ObservableObject {
         var m = ServerMetrics()
         
         // Compound remote shell command
-        let cmd = "printf '===TIME=== '; date +'%H:%M:%S %d/%m'; " +
+        let cmd = "printf '===TIME=== '; date +'%H:%M:%S'; " +
                   "printf '===UPTIME=== '; uptime | sed 's/.*up \\([^,]*\\), .*/\\1/'; " +
                   "printf '===MEM=== '; free -m 2>/dev/null | awk 'NR==2{printf \"%s %s\", $3,$2}' || true; echo ''; " +
                   "printf '===DISK=== '; df -m / 2>/dev/null | awk 'NR==2{printf \"%s %s\", $3,$2}' || true; echo ''; " +
