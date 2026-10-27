@@ -159,11 +159,28 @@ public class ServerMonitorService: ObservableObject {
                   "printf '===DISK=== '; df -m / 2>/dev/null | awk 'NR==2{printf \"%s %s\", $3,$2}' || true; echo ''; " +
                   "printf '===CPU=== '; top -bn1 2>/dev/null | grep 'Cpu(s)' | awk '{print $2}' || top -l 1 2>/dev/null | grep 'CPU usage' | awk '{print $3}' || true"
         
+        let authPrep = SSHAuthHelper.prepareAuth(for: host, jumpHost: jumpHost, oneTime: false)
+        defer {
+            if let tempFile = authPrep.tempFile {
+                try? FileManager.default.removeItem(at: tempFile)
+            }
+        }
+        
         var args = [
             "-o", "ConnectTimeout=5",
-            "-o", "BatchMode=yes",
             "-o", "StrictHostKeyChecking=accept-new"
         ]
+        if host.authType == .password {
+            args.append(contentsOf: [
+                "-o", "BatchMode=no",
+                "-o", "NumberOfPasswordPrompts=1"
+            ])
+        } else {
+            args.append(contentsOf: [
+                "-o", "BatchMode=yes"
+            ])
+        }
+        args.append(contentsOf: authPrep.extraArgs)
         if let jh = jumpHost {
             let jumpTarget = "\(jh.username)@\(jh.hostname)\(jh.port == 22 ? "" : ":\(jh.port)")"
             args.append(contentsOf: ["-J", jumpTarget])
@@ -183,6 +200,7 @@ public class ServerMonitorService: ObservableObject {
         let pipe = Pipe()
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        proc.environment = authPrep.environment
         proc.arguments = args
         proc.standardOutput = pipe
         

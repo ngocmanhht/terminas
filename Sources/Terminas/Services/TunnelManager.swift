@@ -78,12 +78,21 @@ public class TunnelManager: ObservableObject {
         stop(item)
         tunnelErrors.removeValue(forKey: item.id)
         
+        let authPrep = SSHAuthHelper.prepareAuth(for: host, jumpHost: nil, oneTime: false)
+        
         var args = [
             "-N", // Do not execute a remote command (tunnel only)
             "-o", "ExitOnForwardFailure=yes",
             "-o", "ServerAliveInterval=15",
             "-o", "StrictHostKeyChecking=accept-new"
         ]
+        if host.authType == .password {
+            args.append(contentsOf: [
+                "-o", "BatchMode=no",
+                "-o", "NumberOfPasswordPrompts=1"
+            ])
+        }
+        args.append(contentsOf: authPrep.extraArgs)
         
         switch item.tunnelType {
         case .local:
@@ -109,10 +118,14 @@ public class TunnelManager: ObservableObject {
         let proc = Process()
         let errPipe = Pipe()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        proc.environment = authPrep.environment
         proc.arguments = args
         proc.standardError = errPipe
         
         proc.terminationHandler = { [weak self] p in
+            if let tempFile = authPrep.tempFile {
+                try? FileManager.default.removeItem(at: tempFile)
+            }
             Task { @MainActor in
                 self?.processes.removeValue(forKey: item.id)
                 self?.activeTunnelIds.remove(item.id)

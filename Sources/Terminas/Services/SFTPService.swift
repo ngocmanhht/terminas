@@ -49,33 +49,17 @@ public class SFTPService: ObservableObject {
     
     public func downloadFile(host: HostItem, jumpHost: HostItem? = nil, item: RemoteFileItem, localURL: URL) async -> Bool {
         activeTransfer = "Downloading \(item.name)..."
-        var args = [
-            "-o", "BatchMode=yes",
-            "-o", "StrictHostKeyChecking=accept-new"
-        ]
-        if let jh = jumpHost {
-            let jumpTarget = "\(jh.username)@\(jh.hostname)\(jh.port == 22 ? "" : ":\(jh.port)")"
-            args.append(contentsOf: ["-J", jumpTarget])
-        }
-        if host.port != 22 {
-            args.append(contentsOf: ["-P", "\(host.port)"])
-        }
-        if host.authType == .keyFile && !host.keyPath.isEmpty {
-            let expanded = (host.keyPath as NSString).expandingTildeInPath
-            if FileManager.default.fileExists(atPath: expanded) {
-                args.append(contentsOf: ["-i", expanded, "-o", "IdentitiesOnly=yes"])
-            }
-        }
+        var args = Self.scpArgs(host: host, jumpHost: jumpHost)
         let remoteSpec = "\(host.username)@\(host.hostname):'\(item.path)'"
         args.append(remoteSpec)
         args.append(localURL.path)
         
-        let scpArgs = args
+        let (proc, tempFile) = Self.prepareProcess(executable: "/usr/bin/scp", args: args, host: host, jumpHost: jumpHost)
         let success = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let proc = Process()
-                proc.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
-                proc.arguments = scpArgs
+                defer {
+                    if let tempFile { try? FileManager.default.removeItem(at: tempFile) }
+                }
                 do {
                     try proc.run()
                     proc.waitUntilExit()
@@ -91,33 +75,17 @@ public class SFTPService: ObservableObject {
     
     public func uploadFile(host: HostItem, jumpHost: HostItem? = nil, localURL: URL, remoteFolder: String) async -> Bool {
         activeTransfer = "Uploading \(localURL.lastPathComponent)..."
-        var args = [
-            "-o", "BatchMode=yes",
-            "-o", "StrictHostKeyChecking=accept-new"
-        ]
-        if let jh = jumpHost {
-            let jumpTarget = "\(jh.username)@\(jh.hostname)\(jh.port == 22 ? "" : ":\(jh.port)")"
-            args.append(contentsOf: ["-J", jumpTarget])
-        }
-        if host.port != 22 {
-            args.append(contentsOf: ["-P", "\(host.port)"])
-        }
-        if host.authType == .keyFile && !host.keyPath.isEmpty {
-            let expanded = (host.keyPath as NSString).expandingTildeInPath
-            if FileManager.default.fileExists(atPath: expanded) {
-                args.append(contentsOf: ["-i", expanded, "-o", "IdentitiesOnly=yes"])
-            }
-        }
+        var args = Self.scpArgs(host: host, jumpHost: jumpHost)
         args.append(localURL.path)
         let remoteSpec = "\(host.username)@\(host.hostname):'\(remoteFolder)/'"
         args.append(remoteSpec)
         
-        let scpArgs = args
+        let (proc, tempFile) = Self.prepareProcess(executable: "/usr/bin/scp", args: args, host: host, jumpHost: jumpHost)
         let success = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let proc = Process()
-                proc.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
-                proc.arguments = scpArgs
+                defer {
+                    if let tempFile { try? FileManager.default.removeItem(at: tempFile) }
+                }
                 do {
                     try proc.run()
                     proc.waitUntilExit()
@@ -141,13 +109,13 @@ public class SFTPService: ObservableObject {
         args.append("\(host.username)@\(host.hostname)")
         args.append(cmd)
         
-        let execArgs = args
+        let (proc, tempFile) = Self.prepareProcess(executable: "/usr/bin/ssh", args: args, host: host, jumpHost: jumpHost)
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
+                defer {
+                    if let tempFile { try? FileManager.default.removeItem(at: tempFile) }
+                }
                 let pipe = Pipe()
-                let proc = Process()
-                proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-                proc.arguments = execArgs
                 proc.standardOutput = pipe
                 do {
                     try proc.run()
@@ -167,12 +135,12 @@ public class SFTPService: ObservableObject {
         args.append("\(host.username)@\(host.hostname)")
         args.append(command)
         
-        let execArgs = args
+        let (proc, tempFile) = prepareProcess(executable: "/usr/bin/ssh", args: args, host: host, jumpHost: jumpHost)
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let proc = Process()
-                proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-                proc.arguments = execArgs
+                defer {
+                    if let tempFile { try? FileManager.default.removeItem(at: tempFile) }
+                }
                 do {
                     try proc.run()
                     proc.waitUntilExit()
@@ -184,12 +152,71 @@ public class SFTPService: ObservableObject {
         }
     }
     
+    nonisolated private static func prepareProcess(
+        executable: String,
+        args: [String],
+        host: HostItem,
+        jumpHost: HostItem? = nil
+    ) -> (proc: Process, tempFile: URL?) {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: executable)
+        
+        let authPrep = SSHAuthHelper.prepareAuth(for: host, jumpHost: jumpHost, oneTime: false)
+        proc.environment = authPrep.environment
+        
+        var finalArgs = args
+        finalArgs.append(contentsOf: authPrep.extraArgs)
+        proc.arguments = finalArgs
+        
+        return (proc, authPrep.tempFile)
+    }
+    
+    nonisolated private static func scpArgs(host: HostItem, jumpHost: HostItem? = nil) -> [String] {
+        var args = [
+            "-o", "ConnectTimeout=10",
+            "-o", "StrictHostKeyChecking=accept-new"
+        ]
+        if host.authType == .password {
+            args.append(contentsOf: [
+                "-o", "BatchMode=no",
+                "-o", "NumberOfPasswordPrompts=1"
+            ])
+        } else {
+            args.append(contentsOf: [
+                "-o", "BatchMode=yes"
+            ])
+        }
+        if let jh = jumpHost {
+            let jumpTarget = "\(jh.username)@\(jh.hostname)\(jh.port == 22 ? "" : ":\(jh.port)")"
+            args.append(contentsOf: ["-J", jumpTarget])
+        }
+        if host.port != 22 {
+            args.append(contentsOf: ["-P", "\(host.port)"])
+        }
+        if host.authType == .keyFile && !host.keyPath.isEmpty {
+            let expanded = (host.keyPath as NSString).expandingTildeInPath
+            if FileManager.default.fileExists(atPath: expanded) {
+                args.append(contentsOf: ["-i", expanded, "-o", "IdentitiesOnly=yes"])
+            }
+        }
+        return args
+    }
+    
     nonisolated private static func sshArgs(host: HostItem, jumpHost: HostItem? = nil) -> [String] {
         var args = [
             "-o", "ConnectTimeout=7",
-            "-o", "BatchMode=yes",
             "-o", "StrictHostKeyChecking=accept-new"
         ]
+        if host.authType == .password {
+            args.append(contentsOf: [
+                "-o", "BatchMode=no",
+                "-o", "NumberOfPasswordPrompts=1"
+            ])
+        } else {
+            args.append(contentsOf: [
+                "-o", "BatchMode=yes"
+            ])
+        }
         if let jh = jumpHost {
             let jumpTarget = "\(jh.username)@\(jh.hostname)\(jh.port == 22 ? "" : ":\(jh.port)")"
             args.append(contentsOf: ["-J", jumpTarget])
@@ -212,14 +239,14 @@ public class SFTPService: ObservableObject {
         args.append("\(host.username)@\(host.hostname)")
         args.append(script)
         
-        let execArgs = args
+        let (proc, tempFile) = prepareProcess(executable: "/usr/bin/ssh", args: args, host: host, jumpHost: jumpHost)
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
+                defer {
+                    if let tempFile { try? FileManager.default.removeItem(at: tempFile) }
+                }
                 let pipe = Pipe()
                 let errPipe = Pipe()
-                let proc = Process()
-                proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-                proc.arguments = execArgs
                 proc.standardOutput = pipe
                 proc.standardError = errPipe
                 

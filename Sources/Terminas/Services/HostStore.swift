@@ -57,7 +57,9 @@ public class HostStore: ObservableObject {
     
     public func delete(at offsets: IndexSet) {
         for idx in offsets {
-            KeychainService.deletePassword(for: hosts[idx].id)
+            let id = hosts[idx].id
+            KeychainService.deletePassword(for: id)
+            KeychainService.deleteElevatePassword(for: id)
         }
         hosts.remove(atOffsets: offsets)
         save()
@@ -65,6 +67,7 @@ public class HostStore: ObservableObject {
     
     public func delete(_ host: HostItem) {
         KeychainService.deletePassword(for: host.id)
+        KeychainService.deleteElevatePassword(for: host.id)
         hosts.removeAll { $0.id == host.id }
         save()
     }
@@ -74,6 +77,14 @@ public class HostStore: ObservableObject {
         copy.id = UUID()
         copy.label = "\(host.label) (Copy)"
         copy.createdAt = Date()
+        
+        if let pwd = KeychainService.getPassword(for: host.id) {
+            _ = KeychainService.savePassword(for: copy.id, password: pwd)
+        }
+        if let elPwd = KeychainService.getElevatePassword(for: host.id) {
+            _ = KeychainService.saveElevatePassword(for: copy.id, password: elPwd)
+        }
+        
         hosts.insert(copy, at: 0)
         save()
     }

@@ -228,10 +228,12 @@ public struct HostListView: View {
         .sheet(item: $editingHost) { host in
             HostEditSheet(host: host) { updatedHost, password, elevatePassword in
                 hostStore.update(updatedHost)
-                if let pwd = password {
+                if let pwd = password, !pwd.isEmpty {
                     _ = KeychainService.savePassword(for: updatedHost.id, password: pwd)
+                } else {
+                    KeychainService.deletePassword(for: updatedHost.id)
                 }
-                if let elevatePwd = elevatePassword {
+                if let elevatePwd = elevatePassword, !elevatePwd.isEmpty {
                     _ = KeychainService.saveElevatePassword(for: updatedHost.id, password: elevatePwd)
                 } else {
                     KeychainService.deleteElevatePassword(for: updatedHost.id)

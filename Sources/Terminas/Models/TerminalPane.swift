@@ -21,6 +21,13 @@ public class TerminalPane: NSObject, ObservableObject, Identifiable, LocalProces
     
     public var terminalView: LocalProcessTerminalView!
     public weak var parentTab: SessionTab?
+    private var activeTempPassFile: URL?
+    
+    deinit {
+        if let tempFile = activeTempPassFile {
+            try? FileManager.default.removeItem(at: tempFile)
+        }
+    }
     
     public init(id: UUID = UUID(), title: String, host: HostItem? = nil, jumpHost: HostItem? = nil, isLocal: Bool = false) {
         self.id = id
@@ -63,11 +70,15 @@ public class TerminalPane: NSObject, ObservableObject, Identifiable, LocalProces
             )
             status = .connected
         } else if let host = host {
+            let authPrep = SSHAuthHelper.prepareAuth(for: host, jumpHost: jumpHost, oneTime: true, baseEnv: env)
+            self.activeTempPassFile = authPrep.tempFile
+            
             var args = [
                 "-o", "ServerAliveInterval=30",
                 "-o", "ServerAliveCountMax=3",
                 "-o", "StrictHostKeyChecking=accept-new"
             ]
+            args.append(contentsOf: authPrep.extraArgs)
             
             // Proxy Jump (Bastion) Support
             if let jumpHost = jumpHost {
@@ -89,12 +100,19 @@ public class TerminalPane: NSObject, ObservableObject, Identifiable, LocalProces
             let target = "\(host.username)@\(host.hostname)"
             args.append(target)
             
+            let finalEnvArray = authPrep.environment.map { "\($0.key)=\($0.value)" }
             terminalView.startProcess(
                 executable: "/usr/bin/ssh",
                 args: args,
-                environment: envArray
+                environment: finalEnvArray
             )
             status = .connected
+            
+            if let tempFile = authPrep.tempFile {
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 15) {
+                    try? FileManager.default.removeItem(at: tempFile)
+                }
+            }
             
             if host.autoElevate {
                 performAutoElevate(host: host)
@@ -106,7 +124,7 @@ public class TerminalPane: NSObject, ObservableObject, Identifiable, LocalProces
     }
     
     private func performAutoElevate(host: HostItem) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
             guard let self = self, self.status == .connected else { return }
             
             let cmd: String
@@ -124,7 +142,7 @@ public class TerminalPane: NSObject, ObservableObject, Identifiable, LocalProces
             self.send(text: cmd, appendNewline: true)
             
             if let elevatePass = KeychainService.getElevatePassword(for: host.id), !elevatePass.isEmpty {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
                     guard let self = self, self.status == .connected else { return }
                     self.send(text: elevatePass, appendNewline: true)
                 }
@@ -140,6 +158,10 @@ public class TerminalPane: NSObject, ObservableObject, Identifiable, LocalProces
     
     public func close() {
         monitor.stopMonitoring()
+        if let tempFile = activeTempPassFile {
+            try? FileManager.default.removeItem(at: tempFile)
+            activeTempPassFile = nil
+        }
     }
     
     // MARK: - LocalProcessTerminalViewDelegate
