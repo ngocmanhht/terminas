@@ -6,6 +6,8 @@ public enum CryptoService {
     private static let keyAccount = "com.terminas.masterkey"
     private static let serviceName = "com.terminas.app"
     private static let magicHeader = Data("TENC".utf8) // Terminas Encrypted magic prefix
+    nonisolated(unsafe) private static var cachedKey: SymmetricKey? = nil
+    private static let lock = NSLock()
     
     // MARK: - Encryption
     public static func encrypt(_ data: Data) -> Data {
@@ -42,13 +44,23 @@ public enum CryptoService {
     
     // MARK: - Keychain Master Key Management
     private static func getOrCreateMasterKey() -> SymmetricKey? {
+        lock.lock()
+        defer { lock.unlock() }
+        
+        if let key = cachedKey {
+            return key
+        }
+        
         if let keyData = getKeyFromKeychain() {
-            return SymmetricKey(data: keyData)
+            let key = SymmetricKey(data: keyData)
+            cachedKey = key
+            return key
         }
         
         let newKey = SymmetricKey(size: .bits256)
         let keyData = newKey.withUnsafeBytes { Data($0) }
         if saveKeyToKeychain(keyData: keyData) {
+            cachedKey = newKey
             return newKey
         }
         return nil
