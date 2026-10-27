@@ -70,7 +70,7 @@ public class TerminalPane: NSObject, ObservableObject, Identifiable, LocalProces
             )
             status = .connected
         } else if let host = host {
-            let authPrep = SSHAuthHelper.prepareAuth(for: host, jumpHost: jumpHost, oneTime: true, baseEnv: env)
+            let authPrep = SSHAuthHelper.prepareAuth(for: host, jumpHost: jumpHost, oneTime: false, baseEnv: env)
             self.activeTempPassFile = authPrep.tempFile
             
             var args = [

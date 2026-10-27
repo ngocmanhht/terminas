@@ -28,40 +28,45 @@ public enum SSHAuthHelper {
         let script = """
         #!/bin/sh
         # Terminas SSH Native AskPass Helper
-        
-        # 1. Multi-host / Bastion pass mapping
+        PROMPT="$1"
+
+        # 1. Automatic host key fingerprint acceptance (yes/no)
+        case "$PROMPT" in
+            *"yes/no"*)
+                echo "yes"
+                exit 0
+                ;;
+        esac
+
+        # 2. Multi-host / Bastion pass mapping
         if [ -n "$TERMINAS_PASS_MAP" ] && [ -r "$TERMINAS_PASS_MAP" ]; then
             while IFS='=' read -r hostkey passval; do
-                case "$1" in
+                case "$PROMPT" in
                     *"$hostkey"*)
                         printf "%s" "$passval"
                         exit 0
                         ;;
                 esac
             done < "$TERMINAS_PASS_MAP"
+            
+            # Fallback to last password in map if prompt is generic (e.g. "Password:")
+            if [ -n "$passval" ]; then
+                printf "%s" "$passval"
+                exit 0
+            fi
         fi
-        
-        # 2. Single target host password file
+
+        # 3. Target host password file: Read repeatedly during handshake without early deletion
         if [ -n "$TERMINAS_PASS_FILE" ] && [ -r "$TERMINAS_PASS_FILE" ]; then
             cat "$TERMINAS_PASS_FILE"
-            if [ "$TERMINAS_PASS_ONETIME" = "1" ]; then
-                rm -f "$TERMINAS_PASS_FILE"
-            fi
             exit 0
         fi
-        
+
         exit 1
         """
         
-        if !FileManager.default.fileExists(atPath: fileURL.path) {
-            try? script.write(to: fileURL, atomically: true, encoding: .utf8)
-            chmod(fileURL.path, S_IRWXU)
-        } else {
-            if let existing = try? String(contentsOf: fileURL, encoding: .utf8), existing != script {
-                try? script.write(to: fileURL, atomically: true, encoding: .utf8)
-            }
-            chmod(fileURL.path, S_IRWXU)
-        }
+        try? script.write(to: fileURL, atomically: true, encoding: .utf8)
+        chmod(fileURL.path, S_IRWXU)
     }
     
     /// Prepares environment and SSH args for an SSH session
@@ -80,19 +85,15 @@ public enum SSHAuthHelper {
         let hostPassword = KeychainService.getPassword(for: host.id)
         let jumpPassword = jumpHost.flatMap { KeychainService.getPassword(for: $0.id) }
         
-        let needsPassword = (host.authType == .password && (hostPassword?.isEmpty == false)) ||
-                            (jumpHost?.authType == .password && (jumpPassword?.isEmpty == false))
+        let hasPassword = (hostPassword?.isEmpty == false) || (jumpPassword?.isEmpty == false)
         
-        if needsPassword {
+        if hasPassword {
             let helperPath = helperScriptURL.path
             env["SSH_ASKPASS"] = helperPath
             env["SSH_ASKPASS_REQUIRE"] = "force"
             env["DISPLAY"] = ":0"
-            if oneTime {
-                env["TERMINAS_PASS_ONETIME"] = "1"
-            }
             
-            // Bypass pubkey trial on password-configured hosts to prevent "Too many authentication failures"
+            // Prefer password & keyboard-interactive when password auth is selected
             if host.authType == .password {
                 extraArgs.append(contentsOf: [
                     "-o", "PreferredAuthentications=password,keyboard-interactive",
@@ -100,7 +101,7 @@ public enum SSHAuthHelper {
                 ])
             }
             
-            // Bastion Jump Host + Target Host dual password mapping
+            // Dual Bastion Jump Host + Target Host mapping
             if let jp = jumpPassword, !jp.isEmpty, let jh = jumpHost, let hp = hostPassword, !hp.isEmpty {
                 let mapString = "\(jh.hostname)=\(jp)\n\(host.hostname)=\(hp)\n"
                 let tmpMap = FileManager.default.temporaryDirectory.appendingPathComponent("terminas_map_\(UUID().uuidString).dat")

@@ -5,6 +5,7 @@ public struct QuickConnectSheet: View {
     let onConnect: (HostItem) -> Void
     
     @State private var connectionString: String = ""
+    @State private var password: String = ""
     @State private var defaultUsername: String = "root"
     
     public init(onConnect: @escaping (HostItem) -> Void) {
@@ -28,10 +29,17 @@ public struct QuickConnectSheet: View {
                 .foregroundColor(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             
-            TextField("username@hostname:port", text: $connectionString)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 14, design: .monospaced))
-                .onSubmit { connect() }
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("username@hostname:port", text: $connectionString)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 13, design: .monospaced))
+                    .onSubmit { connect() }
+                
+                SecureField("Password (Optional - auto-logins if provided)", text: $password)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 13))
+                    .onSubmit { connect() }
+            }
             
             HStack {
                 Spacer()
@@ -68,16 +76,22 @@ public struct QuickConnectSheet: View {
             }
         }
         
+        let trimmedPass = password.trimmingCharacters(in: .whitespacesAndNewlines)
         let item = HostItem(
             label: "Quick: \(user)@\(host)",
             hostname: host,
             port: port,
             username: user,
-            authType: .agent,
+            authType: trimmedPass.isEmpty ? .agent : .password,
             tags: ["Quick"],
             colorHex: "#FF9500",
             iconName: "bolt.fill"
         )
+        
+        if !trimmedPass.isEmpty {
+            _ = KeychainService.savePassword(for: item.id, password: trimmedPass)
+        }
+        
         onConnect(item)
         dismiss()
     }

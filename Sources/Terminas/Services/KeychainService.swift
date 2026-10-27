@@ -93,19 +93,7 @@ public enum KeychainService {
         lock.lock()
         defer { lock.unlock() }
         
-        if let val = cache[account] {
-            return val
-        }
-        
-        // One-time fallback migration from legacy Keychain if available
-        if let legacy = getFromLegacyKeychain(account: account) {
-            cache[account] = legacy
-            saveVaultToDisk()
-            deleteFromLegacyKeychain(account: account)
-            return legacy
-        }
-        
-        return nil
+        return cache[account]
     }
     
     private static func deleteRaw(account: String) {
@@ -113,7 +101,6 @@ public enum KeychainService {
         lock.lock()
         cache.removeValue(forKey: account)
         saveVaultToDisk()
-        deleteFromLegacyKeychain(account: account)
         lock.unlock()
     }
     
