@@ -63,6 +63,19 @@ public enum KeychainService {
            let dict = try? JSONDecoder().decode([String: String].self, from: decrypted) {
             self.cache = dict
         }
+        
+        // 2. Proactively migrate any lingering items from legacy Keychain
+        var didMigrate = false
+        for acct in getLegacyKeychainAccounts() {
+            if cache[acct] == nil, let val = getFromLegacyKeychain(account: acct) {
+                cache[acct] = val
+                deleteFromLegacyKeychain(account: acct)
+                didMigrate = true
+            }
+        }
+        if didMigrate {
+            saveVaultToDisk()
+        }
     }
     
     private static func saveVaultToDisk() {
@@ -93,7 +106,19 @@ public enum KeychainService {
         lock.lock()
         defer { lock.unlock() }
         
-        return cache[account]
+        if let val = cache[account] {
+            return val
+        }
+        
+        // One-time fallback migration from legacy Keychain if available
+        if let legacy = getFromLegacyKeychain(account: account) {
+            cache[account] = legacy
+            saveVaultToDisk()
+            deleteFromLegacyKeychain(account: account)
+            return legacy
+        }
+        
+        return nil
     }
     
     private static func deleteRaw(account: String) {
@@ -140,6 +165,19 @@ public enum KeychainService {
     }
     
     // MARK: - Legacy Keychain Migration Helpers
+    private static func getLegacyKeychainAccounts() -> [String] {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let list = item as? [[String: Any]] else { return [] }
+        return list.compactMap { $0[kSecAttrAccount as String] as? String }
+    }
+    
     private static func getFromLegacyKeychain(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

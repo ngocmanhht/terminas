@@ -30,5 +30,11 @@ fi
 # Ad-hoc code signing for local macOS execution
 codesign --force --deep --sign - "${APP_DIR}"
 
+if [ -d "/Applications/${APP_NAME}.app" ]; then
+    echo "🔄 Updating /Applications/${APP_NAME}.app with latest build..."
+    rm -rf "/Applications/${APP_NAME}.app"
+    cp -R "${APP_DIR}" "/Applications/${APP_NAME}.app"
+fi
+
 echo "✅ Successfully built ${APP_DIR}!"
 echo "💡 You can launch it with: open ${APP_DIR}"

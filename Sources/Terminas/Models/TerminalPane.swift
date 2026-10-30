@@ -124,7 +124,7 @@ public class TerminalPane: NSObject, ObservableObject, Identifiable, LocalProces
     }
     
     private func performAutoElevate(host: HostItem) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
             guard let self = self, self.status == .connected else { return }
             
             let cmd: String
@@ -142,7 +142,7 @@ public class TerminalPane: NSObject, ObservableObject, Identifiable, LocalProces
             self.send(text: cmd, appendNewline: true)
             
             if let elevatePass = KeychainService.getElevatePassword(for: host.id), !elevatePass.isEmpty {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                     guard let self = self, self.status == .connected else { return }
                     self.send(text: elevatePass, appendNewline: true)
                 }
